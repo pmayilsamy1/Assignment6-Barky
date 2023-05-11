@@ -1,178 +1,125 @@
 from abc import ABC, abstractmethod
-from datetime import datetime
 
 # making use of type hints: https://docs.python.org/3/library/typing.html
 from typing import List, Set
 
-from barkylib.adapters import orm
+from barkylib.adapters.orm import mapper_registry
 from barkylib.domain.models import Bookmark
 
 
-class AbstractBookmarkRepository(ABC):
+class AbstractRepository(ABC):
     def __init__(self):
-        # seen is in reference to events detected
-        self.seen : set[Bookmark] = set()
-
-    def add(self, bookmark: Bookmark) -> None:
-        # add to repo
-        self._add(bookmark)
-        # add to event list
-        self.seen.add(bookmark)
-
-    def get_all(self) -> list[Bookmark]:
-        bookmarks: list[Bookmark] = self._get_all()
-        if bookmarks:
-            self.seen.update(bookmarks)
-        return bookmarks
-
-    def get_by_id(self, value: int) -> Bookmark:
-        # get from repo
-        bookmark: Bookmark = self._get_by_id(value)
-        if bookmark:
-            self.seen.add(bookmark)
-        return bookmark        
-
-    def get_by_title(self, value: str) -> Bookmark:
-        # get from repo
-        bookmark: Bookmark = self._get_by_title(value)
-        if bookmark:
-            self.seen.add(bookmark)
-        return bookmark
-
-    def get_by_url(self, value: str) -> Bookmark:
-        # get from repo
-        bookmark: Bookmark = self._get_by_url(value)
-        if bookmark:
-            self.seen.add(bookmark)
-        return bookmark
+        self.seen = set()
 
     @abstractmethod
-    def _add(self, bookmark: Bookmark) -> None:
+    def add_one(bookmark) -> None:
         raise NotImplementedError("Derived classes must implement add_one")
 
     @abstractmethod
-    def _add_all(self, bookmarks: list[Bookmark]) -> None:
-        raise NotImplementedError("Derived classes must implement add_all")
+    def add_many(bookmarks) -> None:
+        raise NotImplementedError("Derived classes must implement add_many")
 
     @abstractmethod
-    def _delete(bookmark: Bookmark) -> None:
-        raise NotImplementedError("Derived classes must implement delete")
+    def delete_one(bookmark) -> None:
+        raise NotImplementedError("Derived classes must implement delete_one")
 
     @abstractmethod
-    def _get_all(self) -> list[Bookmark]:
-        raise NotImplementedError("Derived classes must implement get_all")
+    def delete_many(bookmarks) -> None:
+        raise NotImplementedError("Derived classes must implement delete_many")
 
     @abstractmethod
-    def _get_by_id(self, value: int) -> Bookmark:
-        raise NotImplementedError("Derived classes must implement get")
-
-    @abstractmethod
-    def _get_by_title(self, value: str) -> Bookmark:
-        raise NotImplementedError("Derived classes must implement get")
-
-    @abstractmethod
-    def _get_by_url(self, value: str) -> Bookmark:
-        raise NotImplementedError("Derived classes must implement get")
-
-    @abstractmethod
-    def _update(self, bookmark: Bookmark) -> None:
+    def get(self, id: int) -> Bookmark:
         raise NotImplementedError("Derived classes must implement update")
 
     @abstractmethod
-    def _update(self, bookmarks: list[Bookmark]) -> None:
+    def update(bookmark) -> int:
         raise NotImplementedError("Derived classes must implement update")
 
+    @abstractmethod
+    def update_many(bookmarks) -> int:
+        raise NotImplementedError("Derived classes must implement update_many")
 
-class SqlAlchemyBookmarkRepository(AbstractBookmarkRepository):
+    @abstractmethod
+    def find_first(query) -> Bookmark:
+        raise NotImplementedError("Derived classes must implement find_first")
+
+    @abstractmethod
+    def find_all(query) -> list[Bookmark]:
+        raise NotImplementedError("Derived classes must implement find_all")
+
+
+# sqlalchemy stuff
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+
+
+class SqlAlchemyRepository(AbstractRepository):
     """
-    Uses guidance from the basic SQLAlchemy 1.4 tutorial: https://docs.sqlalchemy.org/en/14/orm/tutorial.html
+    Uses guidance from the basic SQLAlchemy 2.0 tutorial:
+    https://docs.sqlalchemy.org/en/20/tutorial/index.html
     """
 
-    def __init__(self, session) -> None:
+    def __init__(self, session, connection_string=None) -> None:
         super().__init__()
-        self.session = session
 
-    def _add(self, bookmark: Bookmark) -> None:
-        self.session.add(bookmark)
-        self.session.commit()
+        self.engine = None
 
-    def _add_all(self, bookmarks: list[Bookmark]) -> None:
-        self.session.add_all(bookmarks)
-        self.session.commit()
+        # create db connection
+        if connection_string != None:
+            self.engine = create_engine(connection_string)
+        else:
+            # let's default to in-memory for now
+            self.engine = create_engine("sqlite+pysqlite:///:memory:", echo=True)
 
-    def _delete(self, bookmark: Bookmark) -> None:
-        pass
+        # ensure tables are there
+        mapper_registry.metadata.create_all(self.engine)
 
-    def _get_all(self) -> list[Bookmark]:
-        return self.session.query(Bookmark).all()
+        # obtain session
+        # the session is used for all transactions
+        if session != None:
+            self.Session = session
+        else:
+            self.Session = sessionmaker(bind=self.engine)
 
-    def _get_by_id(self, value: int) -> Bookmark:
-        answer = self.session.query(Bookmark).filter(Bookmark.id == value)
-        return answer.one()
+    def __del__(self):
+        self.Session.commit()
+        self.Session.close()
 
-    def _get_by_title(self, value: str) -> Bookmark:
-        answer = self.session.query(Bookmark).filter(Bookmark.title == value)
-        return answer.one()
+    def add_one(self, bookmark: Bookmark) -> None:
+        self.Session.add(bookmark)
+        self.Session.commit()
 
-    def _get_by_url(self, value: str) -> Bookmark:
-        answer = self.session.query(Bookmark).filter(Bookmark.url == value)
-        return answer.one()
+    def add_many(self, bookmarks: list[Bookmark]) -> None:
+        self.Session.add_all(bookmarks)
+        self.Session.commit()
 
-    def _update(self, bookmark) -> None:
-        pass
+    def delete_one(self, bookmark: Bookmark) -> None:
+        self.Session.delete(bookmark)
+        self.Session.commit()
 
-    def _update(self, bookmarks: list[Bookmark]) -> None:
-        pass
+    def delete_many(self, bookmarks: list[Bookmark]) -> None:
+        for bookmark in bookmarks:
+            self.Session.delete(bookmark)
 
+        self.Session.commit()
 
-class FakeBookmarkRepository(AbstractBookmarkRepository):
-    """
-    Uses a Python list to store "fake" bookmarks: https://www.w3schools.com/python/python_lists.asp
-    """
+    def get(self, id: int) -> Bookmark:
+        # https://docs.sqlalchemy.org/en/20/orm/session_basics.html#get-by-primary-key
+        bookmark = self.Session.get(Bookmark, id)
 
-    def __init__(self, bookmarks):
-        super().__init__()
-        self._bookmarks = set(bookmarks)
+        if bookmark:
+            self.seen.add(bookmark)
 
-    def _add(self, bookmark) -> None:
-        self._bookmarks.add(bookmark)
+        return bookmark
 
-    def _add_all(self, bookmarks: list[Bookmark]) -> None:
-        self._bookmarks.update(bookmarks)
+    def update(self, bookmark) -> int:
+        return self.session.query(bookmark).update({bookmark.url},synchronize_session = False)
 
-    def _delete(self, bookmark: Bookmark) -> None:
-        self._bookmarks.remove(bookmark)
+    def update_many(self, bookmarks) -> int:
+        return self.session.query(bookmarks).update({bookmarks},synchronize_session = False)
 
-    def _get_all(self) -> list[Bookmark]:
-        return self._bookmarks
+    def find_first(self, query) -> Bookmark:
+        return self.session.execute(query).first()
 
-    # python next function: https://www.w3schools.com/python/ref_func_next.asp
-    def _get_by_id(self, value: int) -> Bookmark:
-        return next((b for b in self._bookmarks if b.id == value), None)
-
-    def _get_by_title(self, value: str) -> Bookmark:
-        return next((b for b in self._bookmarks if b.title == value), None)
-
-    def _get_by_url(self, value: str) -> list[Bookmark]:
-        return next((b for b in self._bookmarks if b.url == value), None)
-
-    def _update(self, bookmark: Bookmark) -> None:
-        try:
-            idx = self._bookmarks.index(bookmark)
-            bm = self._bookmarks[idx]
-            with bookmark:
-                bm.id = bookmark.id
-                bm.title = bookmark.title
-                bm.url = bookmark.url
-                bm.notes = bookmark.notes
-                bm.date_added = bookmark.date_added
-                bm.date_edited = datetime.utc.now()
-                self._bookmarks[idx] = bm
-        except:
-            self._bookmarks.append(bookmark)
-
-        return None
-
-    def _update(self, bookmarks: list[Bookmark]) -> None:
-        for inbm in bookmarks:
-            self._update(inbm)
+    def find_all(self, query) -> list[Bookmark]:
+        return self.session.execute(query)
